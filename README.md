@@ -8,9 +8,19 @@ Run [Forgejo](https://forgejo.org) next to GitHub as a warm standby: repositorie
 - [Overview](#overview)
 - [Design principles](#design-principles)
 - [Architecture](#architecture)
-- [Quick start](#quick-start)
+- [VM requirements and recommendations](#vm-requirements-and-recommendations)
+- [Installation](#installation)
+  - [Configuration cheat-sheet](#configuration-cheat-sheet)
+  - [Step 1 – Prerequisites check](#step-1--prerequisites-check)
+  - [Step 2 – Clone the repository](#step-2--clone-the-repository)
+  - [Step 3 – Run the setup script](#step-3--run-the-setup-script)
+  - [Step 4 – Start the stack](#step-4--start-the-stack)
+  - [Step 5 – First-run initialisation](#step-5--first-run-initialisation)
+  - [Step 6 – Trigger the first sync](#step-6--trigger-the-first-sync)
+  - [Step 7 – Confirm the nightly schedule](#step-7--confirm-the-nightly-schedule)
 - [Configuration reference](#configuration-reference)
 - [Deployment](#deployment)
+- [Checking it works](#checking-it-works)
 - [Commands](#commands)
 - [Security notes](#security-notes)
 - [Metadata coverage](#metadata-coverage)
@@ -65,40 +75,160 @@ When GitHub is unavailable you can freeze the mirrors, convert repositories to w
 
 [↑ Back to contents](#contents)
 
-## Quick start
+## VM requirements and recommendations
+
+| | Minimum | Recommended |
+|---|---|---|
+| CPU | 2 vCPU | 4 vCPU |
+| RAM | 4 GB | 8 GB |
+| Disk | 40 GB (more for large orgs or LFS) | 200 GB |
+
+- **Operating system:** any Linux with **Docker 24+** and **Docker Compose v2** (`docker compose`). Ubuntu 22.04 LTS is recommended.
+- **Network:**
+  - Outbound HTTPS (443) to `github.com` / `api.github.com` (mirrors and API) and `codeberg.org` (Forgejo image pulls).
+  - Inbound port **3000** for the Forgejo web UI. It can be firewalled to the LAN only. Note: `docker-compose.yml` binds it to `127.0.0.1`; to reach it from other machines, use a reverse proxy or the port override in `docker-compose.override.example.yml` (see [Deployment](#deployment)).
+- **Disk sizing:** git repositories and LFS objects accumulate in the `forgejo-repos` volume. JSON metadata backups are small by comparison. As a rough guide, budget **~5–10 GB per 100 repositories** for git data, and more for LFS-heavy projects. Keep at least 20 % free space.
+- **No other software needed:** Python, the git client, cron and PostgreSQL all run inside containers. The host needs only Docker (plus `git` to clone this repository and `curl` for the checks below).
+
+[↑ Back to contents](#contents)
+
+## Installation
+
+Follow the steps top to bottom. Every command is meant to be copy-pasted from the repository directory.
+
+### Configuration cheat-sheet
+
+These are the only values you **must** change before the first run. Everything else has a working default.
+
+| What | File | Key | Placeholder to replace |
+|---|---|---|---|
+| GitHub token (classic PAT: `repo` + `read:org`) | `.env` | `GITHUB_TOKEN` | `change-me-github-token` |
+| Forgejo API token (created in [step 5](#step-5--first-run-initialisation)) | `.env` | `FORGEJO_TOKEN` | `change-me-forgejo-api-token` |
+| Forgejo admin password and e-mail | `.env` | `FORGEJO_ADMIN_PASSWORD`, `FORGEJO_ADMIN_EMAIL` | `change-me-strong-admin-password`, `admin@example.com` |
+| GitHub users to mirror | `config/config.yml` | `github.accounts` | `example-user` |
+| GitHub organizations to mirror | `config/config.yml` | `github.organizations` | `example-org` |
+| Forgejo owner for the mirrors | `config/config.yml` | `forgejo.owner` | `backup-user` (keep it or choose a name; it is created in step 5) |
+
+`setup.sh` generates `POSTGRES_PASSWORD`, `FORGEJO_SECRET_KEY` and `FORGEJO_INTERNAL_TOKEN` for you. If you create `.env` by hand, replace those placeholders too (for example with `openssl rand -hex 32`). Remove the `exclude_repos` example patterns in `config/config.yml` that don't apply to you.
+
+[↑ Back to contents](#contents)
+
+### Step 1 – Prerequisites check
+
+```bash
+docker --version && docker compose version && docker info >/dev/null && echo "Docker OK"
+```
+
+You need Docker 24+ and Compose v2.x, and the last command must print `Docker OK`. If `docker info` fails, start the daemon (`sudo systemctl start docker`) or add your user to the `docker` group.
+
+[↑ Back to contents](#contents)
+
+### Step 2 – Clone the repository
 
 ```bash
 git clone https://github.com/entropytwo-ai/forgejo-github-nightly-cloner.git
 cd forgejo-github-nightly-cloner
+```
 
-cp .env.example .env                       # fill in every placeholder
-cp config/config.example.yml config/config.yml   # list your accounts / orgs
-# generate secrets
-openssl rand -hex 32                        # -> FORGEJO_SECRET_KEY
-docker run --rm codeberg.org/forgejo/forgejo:10 forgejo generate secret INTERNAL_TOKEN   # -> FORGEJO_INTERNAL_TOKEN
+[↑ Back to contents](#contents)
 
-# 1. start Forgejo + PostgreSQL
-docker compose up -d postgres forgejo
+### Step 3 – Run the setup script
 
-# 2. create the admin user and the API token for the worker
+```bash
+chmod +x setup.sh   # only needed if the executable bit was lost (e.g. downloaded as a zip)
+./setup.sh
+```
+
+`setup.sh` is safe to re-run because it never overwrites existing files. It:
+
+1. checks that Docker and Docker Compose are installed (and exits with a clear message if not);
+2. copies `.env.example` → `.env` (if missing), generates the internal secrets and opens it in `${EDITOR:-nano}`. Fill in the `.env` rows of the [cheat-sheet](#configuration-cheat-sheet), except `FORGEJO_TOKEN`;
+3. copies `config/config.example.yml` → `config/config.yml` (if missing) and opens it. Fill in the `config/config.yml` rows;
+4. creates `./backups` and `./state`. The stack stores data in Docker named volumes by default; these directories are for when you switch to host bind mounts in `docker-compose.override.yml`;
+5. warns about any placeholders that are still left, then prints `Next: run docker compose up -d`.
+
+<details>
+<summary>Manual alternative (without setup.sh)</summary>
+
+```bash
+cp .env.example .env && chmod 600 .env
+cp config/config.example.yml config/config.yml
+mkdir -p backups state
+# set POSTGRES_PASSWORD, FORGEJO_SECRET_KEY, FORGEJO_INTERNAL_TOKEN (openssl rand -hex 32) and the cheat-sheet values
+nano .env
+nano config/config.yml
+```
+
+</details>
+
+[↑ Back to contents](#contents)
+
+### Step 4 – Start the stack
+
+```bash
+docker compose up -d
+docker compose ps        # wait until postgres and forgejo show "(healthy)" - about 1 minute
+```
+
+The first start pulls images and builds the worker image. The worker can't sync yet because it has no Forgejo token; that's expected.
+
+[↑ Back to contents](#contents)
+
+### Step 5 – First-run initialisation
+
+Create the Forgejo admin user, an API token for the worker, and the organization that will own the mirrors.
+
+```bash
+set -a; . ./.env; set +a     # load .env values into this shell
+
+# 5a. admin user
 docker compose exec -u git forgejo forgejo admin user create --admin \
   --username "$FORGEJO_ADMIN_USER" --password "$FORGEJO_ADMIN_PASSWORD" --email "$FORGEJO_ADMIN_EMAIL"
+
+# 5b. API token for the worker - copy the printed value
 docker compose exec -u git forgejo forgejo admin user generate-access-token \
   --username "$FORGEJO_ADMIN_USER" --token-name worker --scopes all --raw
-# put the printed token into FORGEJO_TOKEN in .env
+```
 
-# 3. create the owner for mirrors (an organization named like forgejo.owner), e.g. in the UI
-#    or: curl -X POST -H "Authorization: token $FORGEJO_TOKEN" -H 'Content-Type: application/json' \
-#          -d '{"username":"backup-user","visibility":"private"}' http://127.0.0.1:3000/api/v1/orgs
+Paste the token into `.env` as `FORGEJO_TOKEN=...`, then continue:
 
-# 4. start the worker and try a dry run
-docker compose up -d --build worker
-docker compose exec worker python -m scripts.run --dry-run sync
-docker compose exec worker python -m scripts.run sync          # first real run
+```bash
+set -a; . ./.env; set +a
+
+# 5c. organization that owns the mirrors (must match forgejo.owner in config/config.yml)
+OWNER=backup-user
+curl -fsS -X POST -H "Authorization: token $FORGEJO_TOKEN" -H 'Content-Type: application/json' \
+  -d "{\"username\":\"$OWNER\",\"visibility\":\"private\"}" \
+  "http://127.0.0.1:${FORGEJO_HTTP_PORT:-3000}/api/v1/orgs" && echo " -> org created"
+
+# 5d. restart the worker so it picks up the new token
+docker compose up -d worker
+```
+
+You can now log in to the web UI at `http://<vm-address>:3000` (or `http://127.0.0.1:3000` on the VM itself) as the admin user.
+
+[↑ Back to contents](#contents)
+
+### Step 6 – Trigger the first sync
+
+```bash
+docker compose exec worker python -m scripts.run --dry-run sync   # shows what would be mirrored; changes nothing
+docker compose exec worker python -m scripts.run sync             # first real run
 docker compose exec worker python -m scripts.run status
 ```
 
-(Load `.env` into your shell first, e.g. `set -a; . ./.env; set +a`, so the `$FORGEJO_ADMIN_*` variables resolve.)
+A successful run ends with `Sync finished: OK`, and `status` lists the mirrors as `active` plus today's backup. Forgejo then clones the repositories in the background; large repositories can take a while to appear with content.
+
+[↑ Back to contents](#contents)
+
+### Step 7 – Confirm the nightly schedule
+
+```bash
+docker compose exec worker cat /etc/cron.d/forgejo-sync   # shows the installed schedule line
+docker compose logs worker | grep "schedule"              # e.g. "worker: schedule '0 2 * * *' (TZ=UTC)"
+```
+
+The schedule comes from `SYNC_SCHEDULE` in `.env` (default `0 2 * * *`, 02:00 in the container's `TZ`). After changing it, run `docker compose up -d worker`. The next morning, `docker compose exec worker python -m scripts.run status` should show a new dated backup.
 
 [↑ Back to contents](#contents)
 
@@ -157,6 +287,28 @@ docker compose exec worker python -m scripts.run status
 - **Monitoring.** `docker compose logs -f worker` shows job output (`LOG_FORMAT=json` for log shippers). Exit codes: `0` ok, `1` errors, `2` refused (lock / failover), `3` discovery safety stop, `4` configuration error.
 - **Upgrades.** `git pull && docker compose build worker && docker compose up -d`.
 - **bare-metal Forgejo.** `forgejo/app.ini.example` mirrors the compose settings.
+
+[↑ Back to contents](#contents)
+
+## Checking it works
+
+Run these from the repository directory on the VM at any time:
+
+```bash
+# All containers up? postgres and forgejo should be "(healthy)", worker "Up"
+docker compose ps
+
+# Follow the worker's output (nightly job logs appear here); Ctrl+C to stop following
+docker compose logs -f worker
+
+# Trigger a sync manually (same job cron runs nightly)
+docker compose exec worker python -m scripts.run sync
+
+# Summary: failover state, mirrors by status, last discovery, recent backups and their counts
+docker compose exec worker python -m scripts.run status
+```
+
+`python scripts/run.py <command>` (run from the worker's working directory `/app`) is equivalent to `python -m scripts.run <command>`. Exit codes: `0` ok, `1` errors, `2` refused (another run in progress, or failover active), `3` discovery safety stop, `4` configuration error. To verify the latest backup's checksums as well, run `docker compose exec worker python -m scripts.run verify`.
 
 [↑ Back to contents](#contents)
 
@@ -251,6 +403,7 @@ What was verified in this repository:
 ## Project layout
 
 ```
+├── setup.sh                        # first-time setup helper (idempotent)
 ├── docker-compose.yml / docker-compose.override.example.yml / .env.example
 ├── config/config.example.yml       # what to mirror
 ├── forgejo/app.ini.example         # reference Forgejo configuration
