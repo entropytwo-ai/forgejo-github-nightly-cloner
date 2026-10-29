@@ -1,0 +1,7 @@
+# /etc/cron.d template. entrypoint.sh replaces __SYNC_SCHEDULE__ with $SYNC_SCHEDULE.
+# Environment (tokens etc.) is loaded from /run/worker.env (mode 0600) because
+# cron does not pass the container environment to jobs.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+__SYNC_SCHEDULE__ root . /run/worker.env && cd /app && python -m scripts.run sync >> /var/log/cron.log 2>&1

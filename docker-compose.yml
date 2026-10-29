@@ -1,0 +1,125 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Forgejo standby for GitHub: Forgejo + PostgreSQL + mirror/backup worker.
+#
+# All secrets come from .env (copy .env.example). `${VAR:?}` makes compose fail
+# fast if a required secret is missing - nothing is hardcoded here.
+#
+# Forgejo image is pinned to a major version. Check the latest release before
+# deploying: https://codeberg.org/forgejo/forgejo/releases
+
+name: forgejo-standby
+
+services:
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:10
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      USER_UID: "1000"
+      USER_GID: "1000"
+      FORGEJO__database__DB_TYPE: postgres
+      FORGEJO__database__HOST: postgres:5432
+      FORGEJO__database__NAME: ${POSTGRES_DB:?}
+      FORGEJO__database__USER: ${POSTGRES_USER:?}
+      FORGEJO__database__PASSWD: ${POSTGRES_PASSWORD:?}
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__security__SECRET_KEY: ${FORGEJO_SECRET_KEY:?set FORGEJO_SECRET_KEY in .env}
+      FORGEJO__security__INTERNAL_TOKEN: ${FORGEJO_INTERNAL_TOKEN:?set FORGEJO_INTERNAL_TOKEN in .env}
+      FORGEJO__server__DOMAIN: ${FORGEJO_DOMAIN:-localhost}
+      FORGEJO__server__ROOT_URL: ${FORGEJO_ROOT_URL:-http://localhost:3000/}
+      FORGEJO__server__HTTP_PORT: "3000"
+      FORGEJO__server__SSH_DOMAIN: ${FORGEJO_DOMAIN:-localhost}
+      FORGEJO__server__SSH_PORT: ${FORGEJO_SSH_PORT:-2222}
+      FORGEJO__server__LFS_START_SERVER: "true"
+      FORGEJO__service__REQUIRE_SIGNIN_VIEW: "true"
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+      FORGEJO__service__DEFAULT_KEEP_EMAIL_PRIVATE: "true"
+      FORGEJO__repository__DEFAULT_PRIVATE: private
+      FORGEJO__mirror__ENABLED: "true"
+      FORGEJO__mirror__MIN_INTERVAL: 10m
+      FORGEJO__mirror__DEFAULT_INTERVAL: 24h
+      # "." in a section name is encoded as _0X2E_ ([cron.update_mirrors]).
+      FORGEJO__cron_0X2E_update_mirrors__SCHEDULE: "@every 1h"
+      FORGEJO__migrations__ALLOWED_DOMAINS: github.com,*.github.com
+      FORGEJO__migrations__ALLOW_LOCALNETWORKS: "false"
+      FORGEJO__actions__ENABLED: "false"
+      FORGEJO__mailer__ENABLED: "false"
+      FORGEJO__log__LEVEL: Info
+    volumes:
+      - forgejo-data:/data
+      - forgejo-repos:/data/git/repositories
+    ports:
+      # Bound to localhost only; publish through a TLS reverse proxy (see docs/SECURITY.md).
+      - "127.0.0.1:${FORGEJO_HTTP_PORT:-3000}:3000"
+      - "127.0.0.1:${FORGEJO_SSH_PORT:-2222}:22"
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/api/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    image: forgejo-github-nightly-cloner-worker:latest
+    restart: unless-stopped
+    depends_on:
+      forgejo:
+        condition: service_healthy
+    environment:
+      # Secrets are passed as environment variables, never as files in the image.
+      GITHUB_TOKEN: ${GITHUB_TOKEN:?set GITHUB_TOKEN in .env}
+      FORGEJO_TOKEN: ${FORGEJO_TOKEN:-}
+      FORGEJO_URL: ${FORGEJO_URL:-http://forgejo:3000}
+      FORGEJO_OWNER: ${FORGEJO_OWNER:-}
+      CONFIG_FILE: /config/config.yml
+      STATE_DIR: /state
+      BACKUP_DIR: /backups
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+      SYNC_SCHEDULE: ${SYNC_SCHEDULE:-0 2 * * *}
+      DRY_RUN: ${DRY_RUN:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./config/config.yml:/config/config.yml:ro
+      - backup-data:/backups
+      - state-data:/state
+    networks:
+      - internal
+
+networks:
+  internal:
+    # A plain bridge (not `internal: true`): the worker and Forgejo must reach github.com.
+    driver: bridge
+
+volumes:
+  forgejo-data:
+  forgejo-repos:
+  postgres-data:
+  backup-data:
+  state-data:

@@ -1,0 +1,16 @@
+# Secrets and local config
+.env
+config/config.yml
+docker-compose.override.yml
+
+# Python
+*.pyc
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.venv/
+
+# Runtime data
+*.db
+backups/
+state/

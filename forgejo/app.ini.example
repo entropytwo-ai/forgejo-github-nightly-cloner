@@ -1,0 +1,95 @@
+; Example Forgejo app.ini for the standby instance.
+;
+; With docker-compose.yml you normally do NOT need this file: the same settings
+; are injected through FORGEJO__section__KEY environment variables. Use it as a
+; reference, or mount it at /data/gitea/conf/app.ini for a bare-metal install.
+; Replace every ${...} placeholder - never commit real secrets.
+
+APP_NAME = Forgejo standby
+RUN_MODE = prod
+RUN_USER = git
+WORK_PATH = /data/gitea
+
+[database]
+DB_TYPE  = postgres
+HOST     = postgres:5432
+NAME     = ${POSTGRES_DB}
+USER     = ${POSTGRES_USER}
+PASSWD   = ${POSTGRES_PASSWORD}
+SSL_MODE = disable
+LOG_SQL  = false
+
+[server]
+PROTOCOL         = http
+HTTP_PORT        = 3000
+DOMAIN           = ${FORGEJO_DOMAIN}
+ROOT_URL         = ${FORGEJO_ROOT_URL}
+SSH_DOMAIN       = ${FORGEJO_DOMAIN}
+SSH_PORT         = 2222
+DISABLE_SSH      = false
+LFS_START_SERVER = true
+OFFLINE_MODE     = true
+
+[lfs]
+PATH = /data/git/lfs
+
+[repository]
+ROOT           = /data/git/repositories
+DEFAULT_PRIVATE = private
+; Mirrors are read-only; nobody should push to them while sync is active.
+DISABLE_STARS  = false
+
+[service]
+; Protect mirrored private repositories: no anonymous browsing, no self sign-up.
+REQUIRE_SIGNIN_VIEW        = true
+DISABLE_REGISTRATION       = true
+DEFAULT_KEEP_EMAIL_PRIVATE = true
+DEFAULT_ALLOW_CREATE_ORGANIZATION = false
+
+[mirror]
+ENABLED          = true
+DISABLE_NEW_PULL = false
+DISABLE_NEW_PUSH = true
+MIN_INTERVAL     = 10m
+DEFAULT_INTERVAL = 24h
+
+[cron.update_mirrors]
+; How often Forgejo checks which mirrors are due for a sync.
+SCHEDULE        = @every 1h
+RUN_AT_START    = true
+
+[migrations]
+; Only allow mirroring from GitHub; block internal network addresses (SSRF).
+ALLOWED_DOMAINS     = github.com,*.github.com
+ALLOW_LOCALNETWORKS = false
+MAX_ATTEMPTS        = 3
+
+[actions]
+; Runners are disabled by default on the standby - see docs/RUNNER_SETUP.md.
+ENABLED = false
+
+[mailer]
+ENABLED = false
+
+[security]
+INSTALL_LOCK           = true
+SECRET_KEY             = ${FORGEJO_SECRET_KEY}
+INTERNAL_TOKEN         = ${FORGEJO_INTERNAL_TOKEN}
+PASSWORD_HASH_ALGO     = argon2
+MIN_PASSWORD_LENGTH    = 12
+PASSWORD_COMPLEXITY    = lower,upper,digit
+LOGIN_REMEMBER_DAYS    = 7
+REVERSE_PROXY_TRUSTED_PROXIES = 127.0.0.0/8,::1/128
+
+[session]
+PROVIDER      = db
+COOKIE_SECURE = true ; set to false only when testing over plain http
+
+[log]
+MODE  = console
+LEVEL = Info
+
+; Admin user: Forgejo does not create an admin from app.ini. After the first
+; start run (inside the container, as user git):
+;   forgejo admin user create --admin --username "$FORGEJO_ADMIN_USER" \
+;     --password "$FORGEJO_ADMIN_PASSWORD" --email "$FORGEJO_ADMIN_EMAIL"
