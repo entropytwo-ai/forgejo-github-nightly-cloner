@@ -1,0 +1,43 @@
+# Copy to config/config.yml and adjust. This file contains NO secrets:
+# tokens are read from environment variables (.env).
+
+github:
+  accounts:        # List of GitHub usernames to mirror
+    - example-user
+  organizations:   # List of GitHub orgs to mirror
+    - example-org
+  exclude_repos:   # Glob patterns (matched case-insensitively against owner/repo)
+    - "*/archived-*"
+    - "example-user/personal-*"
+  include_private: true   # Mirror private repos (requires token with repo scope)
+  include_forks: false    # Whether to mirror forked repos
+  include_archived: false # Whether to mirror archived repos
+
+forgejo:
+  owner: backup-user      # Forgejo user/org that will own mirrored repos (must exist)
+  mirror_interval: "24h"  # How often Forgejo auto-syncs git data
+  lfs: true               # Fetch LFS objects
+  # Optional:
+  # force_private: false            # Make every mirror private regardless of GitHub visibility
+  # repo_name_template: "{repo}"    # Use "{owner}-{repo}" if names collide across owners
+
+backup:
+  retention_days: 30
+  # min_keep: 2             # Always keep at least this many backups (minimum 2)
+  # max_failed_repos: 0     # Failed repos tolerated before a run is not promoted
+  metadata_types:         # What to back up from GitHub API
+    - issues
+    - pull_requests
+    - labels
+    - milestones
+    - releases
+    - comments
+    - topics
+    - collaborators
+
+sync:
+  max_retries: 3
+  retry_delay_seconds: 30
+  rate_limit_buffer: 100  # Stop when remaining requests < this
+  batch_size: 50          # Repos per batch
+  lock_timeout_minutes: 120

@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Optional local overrides. Copy to docker-compose.override.yml (git-ignored is
+# recommended) and uncomment what you need. Compose merges it automatically.
+
+services:
+  # --- Store backups on a host path (e.g. a NAS mount) instead of a named volume.
+  # worker:
+  #   volumes:
+  #     - /mnt/backups/forgejo-standby:/backups
+
+  # --- Expose Forgejo on all interfaces (only behind a firewall / for testing!).
+  # forgejo:
+  #   ports:
+  #     - "3000:3000"
+
+  # --- Forgejo Actions runner (disabled by default; see docs/RUNNER_SETUP.md).
+  # Also set FORGEJO__actions__ENABLED: "true" on the forgejo service.
+  # forgejo:
+  #   environment:
+  #     FORGEJO__actions__ENABLED: "true"
+  #
+  # docker-in-docker:
+  #   image: docker:dind
+  #   privileged: true
+  #   restart: unless-stopped
+  #   command: ["dockerd", "-H", "tcp://0.0.0.0:2375", "--tls=false"]
+  #   networks: [internal]
+  #
+  # forgejo-runner:
+  #   image: code.forgejo.org/forgejo/runner:6
+  #   restart: unless-stopped
+  #   depends_on:
+  #     forgejo:
+  #       condition: service_healthy
+  #     docker-in-docker:
+  #       condition: service_started
+  #   environment:
+  #     DOCKER_HOST: tcp://docker-in-docker:2375
+  #   user: "1000:1000"
+  #   volumes:
+  #     - runner-data:/data
+  #   command: ["forgejo-runner", "daemon", "--config", "/data/config.yml"]
+  #   networks: [internal]
+
+  # --- TLS reverse proxy example (Caddy obtains certificates automatically).
+  # caddy:
+  #   image: caddy:2
+  #   restart: unless-stopped
+  #   ports: ["80:80", "443:443"]
+  #   command: ["caddy", "reverse-proxy", "--from", "git.example.com", "--to", "forgejo:3000"]
+  #   volumes: [caddy-data:/data]
+  #   networks: [internal]
+
+# volumes:
+#   runner-data:
+#   caddy-data:
