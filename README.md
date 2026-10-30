@@ -2,6 +2,12 @@
 
 Run [Forgejo](https://forgejo.org) next to GitHub as a warm standby: repositories in your GitHub accounts and organizations are discovered automatically, kept as Forgejo pull mirrors, and their issues, pull requests, releases and other supported metadata are backed up nightly as verified JSON snapshots.
 
+<table><tr>
+<td><img src=".github/donate-bitcoin-qr.png" width="96" alt="Bitcoin donation QR code"></td>
+<td><sub>💛 If you find this project useful, I'd be grateful for any donation. Thank you!<br>
+<b>Bitcoin:</b> <code>bc1qu6dkcchurnutgc40y6n53s3zm588z9nnkm2ygq</code></sub></td>
+</tr></table>
+
 <a id="contents"></a>
 ## Table of contents
 
